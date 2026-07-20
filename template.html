@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forensics xG: The World Cup Files</title>
+<style>
+/*__WC_FONTS__*/
+
+/* ===================================================================
+   MINIMALIST MONOCHROME
+   Pure black & white. Serif as hero. Lines, not shadows. Zero radius.
+   Every token below is monochrome by design — data series are
+   differentiated by fill / outline / hatch / opacity, never by hue.
+   =================================================================== */
+:root{
+  color-scheme: light;
+  /* surfaces & ink */
+  --bg:#FFFFFF; --paper:#FFFFFF; --muted-bg:#F5F5F5;
+  --fg:#000000; --fg-2:#525252; --fg-3:#8A8A8A;
+  --rule:#000000; --rule-light:#E5E5E5;
+  --inv-bg:#000000; --inv-fg:#FFFFFF;
+
+  /* legacy token names kept so every chart keeps resolving —
+     all remapped to the monochrome scale */
+  --surface-1:#FFFFFF; --surface-2:#FAFAFA; --page:#FFFFFF;
+  --ink:#000000; --ink-2:#525252; --muted:#8A8A8A;
+  --grid:#E5E5E5; --line:#000000; --border:rgba(0,0,0,1);
+  --shadow:none; --r:0px; --r-sm:0px;
+  --accent:#000000; --good:#000000; --warn:#525252;
+
+  /* data encodings: A = solid ink, B = outline/hatch */
+  --home:#000000;  --away:#000000;
+  --home-soft:#E5E5E5; --away-soft:#F5F5F5;
+  --cat-att:#000000; --cat-pos:#525252; --cat-def:#8A8A8A;
+  --pitch:#FFFFFF; --pitch-line:#000000;
+
+  /* type */
+  --display:"Playfair Display",Georgia,"Times New Roman",serif;
+  --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+/* Inversion — the monochrome equivalent of dark mode. Not a palette
+   swap: the whole page flips, which is the system's own emphasis device. */
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#000000; --paper:#000000; --muted-bg:#0D0D0D;
+  --fg:#FFFFFF; --fg-2:#A3A3A3; --fg-3:#6E6E6E;
+  --rule:#FFFFFF; --rule-light:#2A2A2A;
+  --inv-bg:#FFFFFF; --inv-fg:#000000;
+  --surface-1:#000000; --surface-2:#0D0D0D; --page:#000000;
+  --ink:#FFFFFF; --ink-2:#A3A3A3; --muted:#6E6E6E;
+  --grid:#2A2A2A; --line:#FFFFFF; --border:rgba(255,255,255,1);
+  --accent:#FFFFFF; --good:#FFFFFF; --warn:#A3A3A3;
+  --home:#FFFFFF; --away:#FFFFFF;
+  --home-soft:#2A2A2A; --away-soft:#1A1A1A;
+  --cat-att:#FFFFFF; --cat-pos:#A3A3A3; --cat-def:#6E6E6E;
+  --pitch:#000000; --pitch-line:#FFFFFF;
+}
+
+*{box-sizing:border-box; border-radius:0 !important}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:var(--body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  font-variant-numeric:normal;
+}
+/* Layered texture — paper grain + hairline rule pattern. Required by the
+   system so the flatness reads as print, not as "unstyled". */
+body::before{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+  background-image:repeating-linear-gradient(0deg,transparent,transparent 1px,var(--fg) 1px,var(--fg) 2px);
+  background-size:100% 4px; opacity:.015;
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+main,header{position:relative; z-index:1}
+
+h1,h2,h3,h4{margin:0; font-family:var(--display); font-weight:700; letter-spacing:-.03em; line-height:1.02}
+a{color:inherit}
+button,input,select{font-family:inherit}
+button{cursor:pointer}
+::selection{background:var(--fg); color:var(--bg)}
+
+/* numerals & labels live in mono — tabular by default */
+.tnum,td,th,.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+.muted{color:var(--fg-3)} .ink2{color:var(--fg-2)}
+
+/* ============================ layout ============================ */
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px 120px}
+header.top{position:sticky; top:0; z-index:30; background:var(--bg); border-bottom:2px solid var(--rule)}
+.top-in{max-width:1180px; margin:0 auto; padding:14px 24px; display:flex; align-items:center; gap:20px}
+.brand{display:flex; align-items:baseline; gap:12px; min-width:0}
+.brand .glyph{
+  font-family:var(--mono); font-weight:700; font-size:12px; letter-spacing:.08em;
+  border:1px solid var(--rule); padding:4px 7px; flex:none; line-height:1;
+}
+.brand h1{font-family:var(--display); font-size:19px; font-weight:700; letter-spacing:-.02em; line-height:1; white-space:nowrap}
+.brand h1 .colon{color:var(--fg-3); font-weight:400; margin:0 .06em 0 -.02em}
+.brand .sub{font-family:var(--mono); font-size:10px; color:var(--fg-3); letter-spacing:.12em; text-transform:uppercase}
+
+.nav{display:flex; gap:26px; margin-left:auto; align-items:center}
+.nav button{
+  border:0; background:none; color:var(--fg-2); font-family:var(--mono);
+  font-size:11px; letter-spacing:.14em; text-transform:uppercase; padding:6px 0;
+  border-bottom:2px solid transparent; transition:none;
+}
+.nav button:hover{color:var(--fg)}
+.nav button.on{color:var(--fg); border-bottom-color:var(--rule)}
+.nav button:focus-visible{outline:3px solid var(--fg); outline-offset:3px}
+.icon-btn{
+  border:1px solid var(--rule); background:none; color:var(--fg); width:34px; height:34px;
+  display:grid; place-items:center; font-size:13px; flex:none; transition:none;
+}
+.icon-btn:hover{background:var(--fg); color:var(--bg)}
+.icon-btn:focus-visible{outline:3px solid var(--fg); outline-offset:3px}
+
+/* ============================ primitives ============================ */
+.card{background:var(--paper); border:1px solid var(--rule)}
+.pad{padding:22px}
+.grid{display:grid; gap:0}
+.two-col{display:grid; grid-template-columns:1fr 1fr; gap:0}
+
+/* section heading: rule + label, editorial */
+.section-h{
+  display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+  margin:0; padding:22px 0 14px; border-top:4px solid var(--rule);
+}
+.section-h h2{font-size:34px; letter-spacing:-.03em}
+.section-h .note{
+  font-family:var(--mono); font-size:10.5px; color:var(--fg-3);
+  letter-spacing:.1em; text-transform:uppercase;
+}
+.eyebrow{
+  font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--fg-2);
+}
+.chip{
+  display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; padding:4px 9px;
+  border:1px solid var(--rule); color:var(--fg); background:var(--paper);
+}
+.pill{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase;
+  padding:3px 8px; border:1px solid var(--rule); color:var(--fg);
+}
+.dot{width:8px; height:8px; flex:none; background:var(--fg); display:inline-block}
+.code{font-family:var(--mono); letter-spacing:.04em}
+.badge{
+  display:inline-grid; place-items:center; min-width:30px; height:18px; padding:0 5px;
+  font-family:var(--mono); font-size:9.5px; font-weight:700; letter-spacing:.08em;
+  border:1px solid var(--rule); color:var(--fg); background:var(--paper);
+  margin-right:9px; vertical-align:middle;
+}
+.footnote{
+  font-family:var(--mono); font-size:10px; line-height:1.7; color:var(--fg-3);
+  margin-top:12px; letter-spacing:.02em;
+}
+
+/* stat tiles — the inverted band (system "bold choice" #3) */
+.tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:0; border:1px solid var(--rule)}
+.tiles .tile{
+  padding:26px 22px; border-right:1px solid var(--rule-light);
+  background:var(--inv-bg); color:var(--inv-fg); position:relative; overflow:hidden;
+}
+.tiles .tile:last-child{border-right:0}
+.tiles .tile::before{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.05;
+  background-image:repeating-linear-gradient(90deg,transparent,transparent 1px,var(--inv-fg) 1px,var(--inv-fg) 2px);
+  background-size:4px 100%;
+}
+.tile .k{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; opacity:.7}
+.tile .v{font-family:var(--display); font-size:52px; font-weight:700; letter-spacing:-.04em; line-height:1; margin-top:12px}
+.tile .d{font-family:var(--mono); font-size:10px; margin-top:10px; opacity:.65; letter-spacing:.04em}
+
+/* results / match cards */
+.results{display:grid; grid-template-columns:repeat(2,1fr); gap:0}
+.match-card{
+  padding:20px 22px; cursor:pointer; border:1px solid var(--rule); margin:-1px 0 0 -1px;
+  transition:background .1s linear, color .1s linear;
+}
+.match-card:hover{background:var(--fg); color:var(--bg)}
+.match-card:hover .pill,.match-card:hover .badge{border-color:var(--bg); color:var(--bg)}
+.match-card:hover .muted,.match-card:hover .mc-row.lose .nm,.match-card:hover .mc-row.lose .sc{color:var(--bg); opacity:.6}
+.mc-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:14px}
+.mc-row{display:flex; align-items:center; gap:12px; padding:3px 0}
+.mc-row .nm{flex:1; font-family:var(--body); font-size:17px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.mc-row .sc{font-family:var(--display); font-size:24px; font-weight:700; width:26px; text-align:right}
+.mc-row.win .nm{font-weight:600} .mc-row.lose .nm,.mc-row.lose .sc{color:var(--fg-3)}
+.mc-xg{display:flex; align-items:center; gap:10px; margin-top:14px; font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--fg-3)}
+.xgbar{flex:1; height:6px; border:1px solid currentColor; display:flex; overflow:hidden}
+.xgbar i{display:block; height:100%}
+
+/* comparison bars */
+.cmp{display:grid; gap:16px}
+.cmp-row{display:grid; grid-template-columns:58px 1fr 58px; align-items:center; gap:12px}
+.cmp-row .lbl{
+  grid-column:1/4; text-align:center; font-family:var(--mono); font-size:9.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--fg-3); margin-bottom:-8px;
+}
+.cmp-val{font-family:var(--mono); font-size:13px; font-weight:700; font-variant-numeric:tabular-nums}
+.cmp-val.r{text-align:right}
+.cmp-track{height:10px; border:1px solid var(--rule); display:flex; overflow:hidden}
+.cmp-track i{height:100%}
+.cmp-track .h{background:var(--fg)}
+.cmp-track .a{margin-left:auto; background-image:repeating-linear-gradient(45deg,var(--fg) 0 2px,transparent 2px 5px)}
+
+/* tables — hairline editorial */
+table{border-collapse:collapse; width:100%; font-family:var(--mono); font-size:11.5px}
+th,td{padding:9px 10px; text-align:right; white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--fg-3);
+  font-weight:400; border-bottom:2px solid var(--rule); cursor:pointer; user-select:none;
+  position:sticky; top:0; background:var(--bg);
+}
+thead th:hover,thead th.sorted{color:var(--fg)}
+tbody tr{border-bottom:1px solid var(--rule-light)}
+tbody tr:hover{background:var(--muted-bg)}
+td.name{font-family:var(--body); font-size:14px}
+.sh{
+  display:inline-grid; place-items:center; width:22px; height:18px; font-family:var(--mono);
+  font-size:9.5px; border:1px solid var(--rule-light); color:var(--fg-2); margin-right:9px;
+}
+.lb-rank{font-family:var(--display); font-size:17px; color:var(--fg-3); width:30px}
+.lb-bar{height:8px; background:var(--fg); min-width:2px}
+
+/* tabs */
+.subtabs{display:flex; gap:0; flex-wrap:wrap; border:1px solid var(--rule)}
+.subtabs button{
+  border:0; border-right:1px solid var(--rule-light); background:none; color:var(--fg-2);
+  font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  padding:11px 16px; transition:none;
+}
+.subtabs button:last-child{border-right:0}
+.subtabs button:hover{background:var(--muted-bg); color:var(--fg)}
+.subtabs button.on{background:var(--fg); color:var(--bg)}
+.subtabs button:focus-visible{outline:3px solid var(--fg); outline-offset:-3px}
+.seg{display:inline-flex; border:1px solid var(--rule)}
+.seg button{
+  border:0; background:none; color:var(--fg-2); font-family:var(--mono); font-size:10px;
+  letter-spacing:.12em; text-transform:uppercase; padding:9px 15px; transition:none;
+}
+.seg button+button{border-left:1px solid var(--rule-light)}
+.seg button.on,.seg button.on.home,.seg button.on.away,.seg button.on.neu{background:var(--fg); color:var(--bg)}
+.seg button:focus-visible{outline:3px solid var(--fg); outline-offset:-3px}
+
+/* form controls */
+select,input{
+  background:var(--bg); color:var(--fg); border:0; border-bottom:2px solid var(--rule);
+  font-family:var(--mono); font-size:11px; letter-spacing:.08em; padding:8px 4px;
+}
+select:focus,input:focus{outline:none; border-bottom-width:4px}
+input::placeholder{color:var(--fg-3); font-style:italic}
+
+/* pitches & svg */
+/* ---- champions bar (inverted block, only once the final is played) ---- */
+.champ{margin:44px 0 0; background:var(--fg); color:var(--bg); padding:22px 26px;
+  display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap}
+.champ-main{display:flex; align-items:baseline; gap:16px; min-width:0}
+.champ-k{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; opacity:.7}
+.champ-n{font-family:var(--display); font-size:clamp(28px,5vw,46px); font-weight:700; letter-spacing:-.03em; line-height:1}
+.champ-rest{display:flex; gap:20px; flex-wrap:wrap; font-size:12.5px; opacity:.82; padding-bottom:3px}
+.champ-rest b{font-weight:700}
+@media (max-width:620px){ .champ{padding:18px} .champ-rest{gap:12px; font-size:11.5px} }
+
+.pitch-wrap{width:100%; overflow:hidden}
+.pitch-wrap .zc{cursor:crosshair}
+
+/* ---- comparison ledger (players + teams). Prefixed lg- deliberately: the match
+   Summary and Zones panels already own .cmp-row / .cmp-track / .cmp-val, and a bare
+   .cmp-row here silently re-flowed both of them. ---- */
+.lg-sel{font:inherit; font-weight:600; font-size:13px; width:100%; padding:8px 10px;
+  border:1px solid var(--rule); background:var(--surface-1); color:var(--fg); cursor:pointer}
+/* series keys: A is a solid rule, B a dashed one — no hue anywhere */
+.lg-key{width:16px; height:0; flex:none; display:inline-block; border-top:2px solid var(--fg)}
+.lg-key.dash{border-top-style:dashed}
+.lg-row{display:grid; grid-template-columns:46px 1fr 104px 1fr 46px; gap:7px;
+  align-items:center; padding:4px 0; border-bottom:1px solid var(--grid)}
+.lg-lbl{font-size:11.5px; font-weight:600; text-align:center; line-height:1.15}
+.lg-v{font-size:11.5px; color:var(--fg-3)}
+.lg-row .lg-v:first-child{text-align:right}
+.lg-v.lead{color:var(--fg); font-weight:750}
+.lg-track{height:9px; background:var(--grid); position:relative}
+/* the two bars mirror outward from the centre label */
+.lg-fill{position:absolute; top:0; height:100%; display:block}
+.lg-fill.a{right:0; background:var(--fg)}
+.lg-fill.b{left:0; background-image:repeating-linear-gradient(45deg,var(--fg) 0 2px,transparent 2px 5px);
+  border:1px solid var(--fg); box-sizing:border-box}
+.lg-tally{margin-top:12px; padding-top:10px; border-top:1px solid var(--rule); font-size:12.5px}
+/* style metrics have no better/worse direction — muted so they read as context, not contest */
+.lg-row.style-row .lg-lbl{color:var(--fg-3); font-weight:500}
+.lg-row.style-row .lg-fill{opacity:.45}
+@media (max-width:620px){
+  .lg-bar{grid-template-columns:1fr; gap:8px}
+  .lg-row{grid-template-columns:38px 1fr 80px 1fr 38px; gap:5px}
+  .lg-lbl{font-size:10.5px}
+}
+svg{display:block; width:100%; height:auto}
+.legend{
+  display:flex; gap:14px 18px; flex-wrap:wrap; font-family:var(--mono); font-size:9px;
+  letter-spacing:.08em; color:var(--fg-2); margin-top:14px; align-items:center; text-transform:uppercase;
+}
+.legend .it{display:flex; align-items:center; gap:7px}
+
+/* match header */
+.mh{display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:18px; padding:34px 24px}
+.mh .team{display:flex; flex-direction:column; gap:8px; min-width:0}
+.mh .team>div{min-width:0; max-width:100%}
+.mh .team>div>div{min-width:0}
+.mh .team.r{align-items:flex-end}
+.mh .team .nm{font-family:var(--display); font-size:32px; font-weight:700; letter-spacing:-.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%}
+.mh .team .fm{font-family:var(--mono); font-size:10px; letter-spacing:.14em; color:var(--fg-3)}
+.mh .score{font-family:var(--display); font-size:64px; font-weight:700; letter-spacing:-.05em; text-align:center; line-height:.9}
+.mh .score .ht{font-family:var(--mono); font-size:10px; font-weight:400; color:var(--fg-3); letter-spacing:.14em; margin-top:8px}
+.mh .badge{width:auto; min-width:44px; height:26px; font-size:11px; margin-right:0}
+.back{
+  display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:10px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--fg); border-bottom:1px solid var(--rule);
+  padding-bottom:3px; cursor:pointer;
+}
+.back:hover{background:var(--fg); color:var(--bg)}
+
+/* timeline */
+.tl{position:relative; padding:6px 0}
+.tl-ev .ic{border:1px solid var(--rule)}
+
+.hidden{display:none!important}
+.tooltip{
+  position:fixed; z-index:100; pointer-events:none; background:var(--fg); color:var(--bg);
+  border:0; padding:10px 13px; font-family:var(--mono); font-size:10.5px; letter-spacing:.04em;
+  opacity:0; transition:none; max-width:250px;
+}
+.tooltip .tt-h{font-weight:700; margin-bottom:4px; text-transform:uppercase; letter-spacing:.1em}
+.tooltip .tt-r{opacity:.75}
+
+/* skip link */
+.skip{position:absolute; left:-9999px; top:0; background:var(--fg); color:var(--bg); padding:12px 18px;
+  font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; z-index:99}
+.skip:focus{left:0}
+
+@media (max-width:900px){
+  .tiles{grid-template-columns:repeat(2,1fr)}
+  .tiles .tile:nth-child(2n){border-right:0}
+  .tiles .tile:nth-child(-n+2){border-bottom:1px solid var(--rule-light)}
+  .results{grid-template-columns:1fr}
+  .two-col{grid-template-columns:1fr}
+  .section-h h2{font-size:26px}
+  .mh .team .nm{font-size:20px} .mh .score{font-size:40px}
+  .nav{gap:16px}
+}
+@media (max-width:620px){
+  .top-in{flex-wrap:wrap; gap:12px; padding:12px 18px}
+  .brand{order:1} #theme{order:2; margin-left:auto}
+  .nav{order:3; width:100%; margin-left:0; overflow-x:auto; gap:20px; padding-bottom:2px}
+  .nav button{flex:none; white-space:nowrap}
+  .brand .sub{display:none}
+  .brand h1{font-size:16px}
+  .subtabs{flex-wrap:nowrap; overflow-x:auto}
+  .subtabs button{flex:none}
+  .wrap{padding:0 18px 80px}
+  .tile .v{font-size:38px}
+  .mh{gap:10px; padding:22px 14px}
+  .mh .badge{display:none}
+  .mh .team .nm{font-size:17px} .mh .score{font-size:34px}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#app">Skip to content</a>
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <span class="glyph">26</span>
+      <div>
+        <h1>Forensics xG<span class="colon">:</span> The World Cup Files</h1>
+        <div class="sub">Canada · Mexico · USA — provider event data</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="overview" class="on">Overview</button>
+      <button data-view="groups">Groups</button>
+      <button data-view="knockouts">Knockouts</button>
+      <button data-view="teams">Teams</button>
+      <button data-view="players">Players</button>
+    </nav>
+    <button class="icon-btn" id="theme" title="Invert" aria-label="Invert colours">◐</button>
+  </div>
+</header>
+<main class="wrap" id="app"></main>
+<div class="tooltip" id="tt"></div>
+
+<script id="wc-data" type="application/json">/*__WC_DATA__*/</script>
+<script>
+/*__WC_APP__*/
+</script>
+</body>
+</html>

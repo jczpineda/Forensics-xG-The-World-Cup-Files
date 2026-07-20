@@ -1,0 +1,16 @@
+# ---- licensed data -------------------------------------------------------
+# data.json is derived from commercial match-event feeds, and the built
+# dashboard inlines all of it. Neither is redistributed here. Build them yourself
+# from your own licensed feed access — see "Rebuilding from source" in the README.
+data.json
+world-cup-2026-dashboard.html
+
+# ---- local working files -------------------------------------------------
+*.bak
+data.json.*
+__pycache__/
+*.pyc
+
+# Google Fonts binaries pulled by build_fonts.py — intermediates only; the
+# subsetted, base64-inlined result is committed as fonts/fonts.css
+fonts/*.woff2
