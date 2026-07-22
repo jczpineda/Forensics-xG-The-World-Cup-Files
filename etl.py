@@ -88,10 +88,86 @@ def load(fp):
 def quals(e):
     return {q['qualifierId']: q.get('value') for q in e.get('qualifier', [])}
 
-# Geometric xG proxy (no native xG in feed). Pitch 105x68, attack toward x=100.
+# Geometric xG model (the feed carries no native xG). Pitch 105x68, attack toward x=100.
 PITCH_L, PITCH_W = 105.0, 68.0
 GOAL_HALF = 7.32/2.0  # 3.66 m
-K_CAL = 1.2401         # non-penalty xG calibration (see xg_proxy) — refit on all 104
+
+def shot_geom(x, y):
+    """(angle subtended by the goal, distance to goal centre in metres)."""
+    px = x/100.0*PITCH_L
+    py = y/100.0*PITCH_W
+    dx = max(PITCH_L - px, 0.15)
+    dy = py - PITCH_W/2.0
+    dist = math.hypot(dx, dy)
+    a = math.atan2(GOAL_HALF*2*dx, dx*dx + dy*dy - GOAL_HALF*GOAL_HALF)
+    if a < 0:
+        a += math.pi
+    return a, dist
+
+# Coefficients are FITTED to this tournament's own shot outcomes by maximum likelihood
+# (see fit_xg below) rather than hand-tuned to chosen anchors. The values here are a
+# sane prior used only if the fit cannot run; fit_xg overwrites them at startup.
+#   [intercept, angle, distance, header, free-kick]
+XG_W = [-1.6252, 1.8153, -0.0753, -1.2475, -0.35]
+
+def xg_proxy(x, y, is_head, is_pen, is_fk):
+    if is_pen:
+        return 0.76
+    a, dist = shot_geom(x, y)
+    z = (XG_W[0] + XG_W[1]*a + XG_W[2]*dist
+         + XG_W[3]*(1.0 if is_head else 0.0) + XG_W[4]*(1.0 if is_fk else 0.0))
+    return max(0.005, min(0.97, 1.0/(1.0+math.exp(-max(-30.0, min(30.0, z))))))
+
+def fit_xg(samples, iters=60):
+    """Newton/IRLS logistic fit on [angle, distance, header, free-kick] -> goal.
+
+    Replaces the previous approach of hand-picking coefficients and then applying a
+    single global multiplier (K_CAL) so the totals reconciled. That multiplier hid a
+    real shape error: the hand-tuned curve was too steep in distance, over-predicting
+    close-range shots and under-predicting from 22-30m by more than 2x, while the
+    tournament total still looked perfectly calibrated because the errors cancelled.
+    A fitted logistic is calibrated band by band AND self-calibrating in total, so it
+    also removes the need to refit K_CAL by hand whenever matches are added.
+    """
+    global XG_W
+    if len(samples) < 200:
+        return None
+    X = [[1.0, a, dist, hd, fk] for a, dist, hd, fk, _ in samples]
+    Y = [g for _, _, _, _, g in samples]
+    n = 5
+    w = [0.0]*n
+    for _ in range(iters):
+        grad = [0.0]*n
+        H = [[0.0]*n for _ in range(n)]
+        for xi, yi in zip(X, Y):
+            z = sum(a*b for a, b in zip(w, xi))
+            p = 1.0/(1.0+math.exp(-max(-30.0, min(30.0, z))))
+            r = yi - p
+            wt = max(p*(1.0-p), 1e-6)
+            for i in range(n):
+                grad[i] += r*xi[i]
+                for j in range(n):
+                    H[i][j] += wt*xi[i]*xi[j]
+        for i in range(n):
+            H[i][i] += 1e-4                      # ridge, keeps the solve stable
+        A = [H[i][:] + [grad[i]] for i in range(n)]
+        for c in range(n):                       # Gaussian elimination w/ pivoting
+            piv = max(range(c, n), key=lambda r: abs(A[r][c]))
+            A[c], A[piv] = A[piv], A[c]
+            if abs(A[c][c]) < 1e-12:
+                return None
+            for r in range(n):
+                if r == c:
+                    continue
+                f = A[r][c]/A[c][c]
+                for k in range(c, n+1):
+                    A[r][k] -= f*A[c][k]
+        delta = [A[i][n]/A[i][i] for i in range(n)]
+        w = [w[i] + delta[i] for i in range(n)]
+        if max(abs(v) for v in delta) < 1e-9:
+            break
+    XG_W = w
+    return w
 
 # ---- pitch zones (attacking direction: x 0=own goal, 100=opponent goal) -----
 # 5-lane model so zone 14 and the half-spaces tile cleanly (no overlap):
@@ -110,33 +186,6 @@ TOUCH = {1,2,3,7,8,10,11,12,13,14,15,16,41,44,45,49,50,52,61,74}
 # 55 offside provoked, 58 penalty faced)
 DEADBALL = {2,4,5,6,16,17,18,19,20,27,28,30,32,40,55,58}
 HX, HY = 12, 8         # heatmap grid (cols x rows)
-
-def xg_proxy(x, y, is_head, is_pen, is_fk):
-    if is_pen:
-        return 0.76
-    px = x/100.0*PITCH_L
-    py = y/100.0*PITCH_W
-    dx = max(PITCH_L - px, 0.15)
-    dy = py - PITCH_W/2.0
-    dist = math.hypot(dx, dy)
-    # angle subtended by the two posts
-    a = math.atan2(GOAL_HALF*2*dx, dx*dx + dy*dy - GOAL_HALF*GOAL_HALF)
-    if a < 0:
-        a += math.pi
-    # logistic fitted (least-squares) to realistic open-play anchors:
-    # 6yd central~.46, pen-spot open~.19, box edge~.08, 25m~.02
-    z = -0.3432 + 0.8653*a - 0.1501*dist
-    xg = 1.0/(1.0+math.exp(-z))
-    if is_head:
-        xg *= 0.55
-    if is_fk:
-        xg *= 0.65
-    # calibration: scale non-penalty xG so predicted goals sum to observed goals
-    # across the tournament (278 non-pen goals / 224.2 raw non-pen xG = 1.2401).
-    # Refit after the final and third-place play-off were added — the 102-match fit
-    # of 1.222 had drifted to -1.5%, largely on the 10-goal third-place match.
-    xg *= K_CAL
-    return max(0.005, min(0.97, xg))
 
 def fmt_min(e):
     return int(e.get('timeMin', 0))
@@ -727,6 +776,46 @@ for root, _dirs, files in os.walk(SRC):
     for fn in files:
         if fn.lower().endswith('.json'):
             candidates.append(os.path.join(root, fn))
+
+# ---- pass 1: fit the xG model to this tournament's own shot outcomes ----------
+# Only shot geometry and outcome are read here, both independent of the model itself,
+# so there is no circularity. Penalties are excluded (fixed 0.76) and own goals are
+# not shots. Feeds are parsed and discarded one at a time to keep memory flat.
+def _fit_pass(paths):
+    samples = []
+    for fp_ in paths:
+        try:
+            dd = load(fp_)
+        except Exception:
+            continue
+        if not dd or 'matchInfo' not in dd or not is_wc(dd):
+            continue
+        for e in dd.get('liveData', {}).get('event', []):
+            t_ = e.get('typeId')
+            if t_ not in (13, 14, 15, 16):
+                continue
+            if (e.get('periodId') or 1) >= 5:            # shootout, not open play
+                continue
+            q_ = {q['qualifierId'] for q in e.get('qualifier', [])}
+            if 9 in q_ or 28 in q_:                      # penalty / own goal
+                continue
+            x_, y_ = e.get('x'), e.get('y')
+            if x_ is None or y_ is None:
+                continue
+            a_, d_ = shot_geom(x_, y_)
+            samples.append((a_, d_, 1.0 if 15 in q_ else 0.0,
+                            1.0 if (26 in q_ or 25 in q_) else 0.0,
+                            1.0 if t_ == 16 else 0.0))
+    return samples
+
+_samples = _fit_pass(candidates)
+_w = fit_xg(_samples)
+if _w:
+    print('xG model fitted on %d non-penalty shots:' % len(_samples))
+    print('   z = %.4f + %.4f*angle %+.4f*dist %+.4f*header %+.4f*freekick'
+          % tuple(_w))
+else:
+    print('xG fit skipped (too few shots) — using prior coefficients')
 
 matches = []
 seen_ids = set()

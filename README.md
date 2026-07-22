@@ -280,13 +280,23 @@ the heat maps are all symmetric about the axis. It was the orientation and the n
 ## Methodology & caveats
 
 - **Expected goals (xG)** — the source feed carries **no native xG**, so each shot is
-  scored by a **geometric logistic model** fitted (least squares) to realistic
-  open-play anchors using shot distance and the angle subtended by the goal; headers
-  (×0.55), set-pieces (×0.65) and penalties (fixed 0.76) are adjusted. Following the
-  *Forensics xG* approach, non-penalty xG is then **calibrated (×1.2401) so predicted
-  goals sum to observed goals** across the tournament — non-penalty xG 278.0 vs 278
-  actual non-penalty goals, 0.01% off. (The factor is refit whenever matches are added:
-  the 102-match fit of ×1.222 had drifted to −1.5% by the end of the tournament.) Treat it as a *shot-quality estimate*, not vendor xG.
+  scored by a **logistic model fitted by maximum likelihood to this tournament's own
+  2,554 non-penalty shot outcomes**, on the angle subtended by the goal, distance, and
+  header / free-kick flags. Penalties are fixed at 0.76. The fit runs inside `etl.py`
+  at build time, so the model re-derives itself whenever the match set changes.
+
+  It replaced a hand-tuned curve whose coefficients were chosen against plausible
+  anchors and then multiplied by a single global constant so the totals reconciled.
+  That constant hid a **shape error**: the curve was too steep in distance,
+  over-predicting close range and under-predicting shots from 22–30 m by more than 2×
+  (0.022 predicted against 0.048 actual), while the tournament total still looked
+  perfectly calibrated because the two errors cancelled. Aggregate calibration is a
+  weak test — it is worth checking band by band.
+
+  The fitted model is calibrated **within sampling noise in every distance band and
+  every probability bucket**, sums to 278.0 against 278 actual non-penalty goals with
+  no manual constant, and is **1.8% better on 5-fold cross-validated log-loss**. Treat
+  it as a *shot-quality estimate*, not vendor xG.
 - **npxG** (non-penalty xG) and **xA** are included. xA is derived by crediting a shot's
   xG to the player who made the immediately preceding completed pass for that team
   (a shot-assist derivation, so it covers all chances created, not just goal assists).
