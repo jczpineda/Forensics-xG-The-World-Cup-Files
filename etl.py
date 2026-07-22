@@ -52,13 +52,17 @@ def pos_group(slot):
     if slot==0: return 'SUB'
     if slot==1: return 'GK'
     if slot in (2,3,5,6): return 'DEF'   # RB, LB, CB, CB
-    if slot in (4,8,10): return 'MID'    # CM, CM, CAM
+    if slot in (4,8): return 'MID'       # CM, CM
     if slot == 9: return 'FWD'           # ST
-    # Slots 7 and 11 (the wide berths) are genuinely ambiguous: they hold both
-    # out-and-out wingers (Yamal 72.4, Dembele 69.2 avg x) and central midfielders
-    # pushed wide (De Paul 53.0, Odegaard 57.5). No fixed table can separate them,
-    # so they are resolved later by nearest centroid on real average position.
-    return 'WIDE'
+    if slot == 10: return 'AMB10'        # nominal attacking-midfield berth — see below
+    # Slots 7, 10 and 11 are genuinely ambiguous — what they mean depends on the
+    # formation and the player, so no fixed table can separate them:
+    #   7, 11  wingers (Yamal 72.4, Dembele 69.2 avg x) vs central midfielders
+    #          pushed wide (De Paul 53.0, Gravenberch 58.2)
+    #   10     a second striker in 4-4-2 / 4-3-3 / 4-2-3-1 (median x 60.5-64.7)
+    #          but a genuine central midfielder in 4-1-4-1 / 5-4-1 (46.1-51.8)
+    # All three are resolved later by nearest centroid on real average position.
+    return 'AMB'
 
 BODY = {15:'Head',72:'Left foot',20:'Right foot',21:'Other'}
 
@@ -880,26 +884,33 @@ avg_of = lambda pid: (avgx_sum[pid] / avgx_n[pid]) if avgx_n[pid] else None
 
 # Centroids come from the UNAMBIGUOUS slots only, so the wide berths can be measured
 # against a clean reference before they are folded in.
+# Slot 10 counts toward the MID reference even though it is reassignable. Dropping it
+# leaves MID anchored on slots 4 and 8 only — the DEEP central midfielders — which pulls
+# the centroid down to 47.4, drags the MID/FWD boundary to ~54.6 and misclassifies
+# ordinary attacking midfielders as forwards. Counting it keeps MID at ~51.7 and the
+# boundary at ~56.8, which separates Messi (68.6) from Bellingham (55.9) correctly.
+REF = {'AMB10': 'MID'}
 cent = {}
 for g in ('GK', 'DEF', 'MID', 'FWD'):
     vals = [avg_of(p) for p, v in start_votes.items()
-            if v and max(v, key=v.get) == g and avg_of(p) is not None]
+            if v and REF.get(max(v, key=v.get), max(v, key=v.get)) == g
+            and avg_of(p) is not None]
     if vals: cent[g] = sum(vals) / len(vals)
 
-# Resolve each player's WIDE starts to MID or FWD by their real average position, then
-# fold those back in as votes. Resolving BEFORE the modal vote matters: a winger with
-# six wide starts and one in a central slot must not be called a midfielder on the
-# strength of that single start.
-wide_fixed = defaultdict(int)
+# Resolve each player's ambiguous starts to MID or FWD by their real average position,
+# then fold those back in as votes. Resolving BEFORE the modal vote matters: a forward
+# with six ambiguous starts and one in a central slot must not be called a midfielder on
+# the strength of that single start.
+amb_fixed = defaultdict(int)
 for pid_, votes in start_votes.items():
-    n_wide = votes.pop('WIDE', 0)
-    if not n_wide: continue
+    n_amb = votes.pop('AMB', 0) + votes.pop('AMB10', 0)
+    if not n_amb: continue
     a = avg_of(pid_)
     g = ('MID' if a is None or not {'MID', 'FWD'} <= set(cent)
          else min(('MID', 'FWD'), key=lambda gg: abs(cent[gg] - a)))
-    votes[g] += n_wide; wide_fixed[g] += 1
-print('resolved %d wide-slot starters by average position: %s'
-      % (sum(wide_fixed.values()), dict(wide_fixed)))
+    votes[g] += n_amb; amb_fixed[g] += 1
+print('resolved %d ambiguous-slot starters by average position: %s'
+      % (sum(amb_fixed.values()), dict(amb_fixed)))
 
 for pid_, votes in start_votes.items():
     if votes: starter_group[pid_] = votes.most_common(1)[0][0]

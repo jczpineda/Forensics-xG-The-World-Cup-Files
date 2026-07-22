@@ -231,21 +231,29 @@ depth ordering. Verified against median pitch position pooled over all 208 team-
 The original table read slots 2–6 as defenders, which put **slot 4 — a central
 midfielder — in defence**. That is why Declan Rice registered as a defender.
 
-The two **wide** berths (7 and 11) are genuinely ambiguous: they hold out-and-out
-wingers (Yamal avg x 72.4, Dembélé 69.2) *and* central midfielders pushed wide (De Paul
-53.0, Gravenberch 58.2). No fixed table separates those, so they are resolved by nearest
-centroid on the player's real average position, against centroids learned from the
-unambiguous slots. Two ordering details matter: centroids are built from unambiguous
-slots only, and wide starts are resolved **before** the modal vote across a player's
-matches — otherwise a winger with six wide starts and one central start is called a
-midfielder on the strength of that single start.
+Three slots are genuinely ambiguous, and no fixed table separates them:
+
+- **7 and 11** hold out-and-out wingers (Yamal avg x 72.4, Dembélé 69.2) *and* central
+  midfielders pushed wide (De Paul 53.0, Gravenberch 58.2).
+- **10** is a second striker in 4-4-2 / 4-3-3 / 4-2-3-1 (median x 60.5–64.7) but a genuine
+  central midfielder in 4-1-4-1 / 5-4-1 (46.1–51.8).
+
+All three are resolved by nearest centroid on the player's real average position. Two
+details matter, both of which produced visible errors when I got them wrong:
+
+1. **Slot 10 still counts toward the MID reference** even though it is reassignable.
+   Dropping it leaves MID anchored on slots 4 and 8 — the *deep* central midfielders —
+   which pulls that centroid from 51.7 down to 47.4, drags the MID/FWD boundary to ~54.6
+   and starts calling ordinary attacking midfielders forwards.
+2. **Ambiguous starts are resolved before the modal vote** across a player's matches,
+   not after. Otherwise a winger with six wide starts and one central start is called a
+   midfielder on the strength of that single start.
 
 A player's final position is the **most common** across their starts. Substitutes, who
 carry no slot at all, are inferred from average touch position by the same centroids.
 
-Spot-checked against 21 players whose roles are not in doubt: 20 correct. The miss is
-Ødegaard (avg x 57.5, almost exactly between the MID and FWD centroids) — a genuinely
-borderline advanced playmaker.
+Spot-checked against 29 players whose roles are not in doubt — Messi, Mbappé, Haaland,
+Bellingham, Rodri, Rice, De Bruyne-class names across all four lines: **29 correct**.
 
 ## Pitch orientation (corrected 20 Jul)
 
