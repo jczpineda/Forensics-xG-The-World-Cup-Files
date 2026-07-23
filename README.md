@@ -155,6 +155,17 @@ Percentiles are always vs same-position players with **≥180 minutes** (a stabl
 floor, independent of the table's minutes filter), so a profile doesn't shift as you
 change the view.
 
+**Scatter** (the *Scatter* tab) — plots any per-90 metric against any other, one dot
+per player. Pick the two axes from dropdowns; the dashed crosshair marks the median of
+the players currently shown, so the four quadrants read as above/below the field on each
+axis. Dot size is minutes played, so the reliable sample sits visually heavier. The base
+dots are semi-transparent, so a dense cluster reads as darkness (and, inverted, as
+brightness) rather than a hairball of overlapping rings. Labels are placed greedily from
+the most extreme players inward, skipping any that would collide, so the outliers are
+named without turning the plot to mush. Search highlights matching dots; click any dot
+for that player's full profile. It respects the same position / minutes / per-90 filters
+as the table.
+
 **Head to head** (the *Compare* tab, or the **Compare ⇄** button on any profile) — puts
 any two players on one set of percentile axes:
 

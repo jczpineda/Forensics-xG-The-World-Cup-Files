@@ -312,7 +312,7 @@ function teamTactical(T){
 const state={view:'overview', mi:0, tab:'summary', net:'home', lb:'scorers',
   sort:{key:'xg',dir:-1}, group:null, team:null, ko:'bracket', from:'overview',
   pPos:'all', pMin:270, pPer90:true, pSort:{key:'xg',dir:-1}, pSearch:'', pPlayer:null,
-  hPlayer:'', pf:'all', tmap:'heat', pMode:'table', pcA:'', pcB:'',
+  hPlayer:'', pf:'all', tmap:'heat', pMode:'table', pcA:'', pcB:'', pxk:'npxg', pyk:'xa',
   tMode:'dossier', tcA:'', tcB:'', tcmap:'created', tRadar:'threat'};
 
 /* single source of truth for the match-centre tabs — Match() renders these and the
@@ -1757,23 +1757,165 @@ const pFmt=(p,c)=>{ if(c.t==='pos') return p.group; if(c.t==='tot') return Math.
   // rendering npxG 4.7 as "5" while the sort still used the true value.)
   return P_FRACTIONAL.has(c.k) ? v.toFixed(2) : Math.round(v); };
 
+/* ============================= player scatter ========================== */
+// axis choices: every numeric player column (position/label columns excluded)
+const SCATTER_METRICS=[
+  {k:'min',l:'Minutes'},{k:'goals',l:'Goals'},{k:'npxg',l:'npxG'},{k:'xa',l:'xA'},
+  {k:'shots',l:'Shots'},{k:'xt',l:'xT created'},{k:'xtp',l:'xT prevented'},
+  {k:'carries',l:'Carries'},{k:'prog',l:'Progressive passes'},{k:'_def',l:'Tackles + interceptions'},
+  {k:'recov',l:'Recoveries'},{k:'dribbles',l:'Dribbles'},{k:'aerials',l:'Aerials won'},
+  {k:'_passpct',l:'Pass %'},
+];
+// a metric's value for a player, honouring the Per-90 / Totals toggle. Minutes and
+// pass % are inherently non-per-90, so they ignore it.
+function smVal(p,k){
+  if(k==='min') return p.min;
+  if(k==='_passpct') return p._passpct;
+  const raw=p[k]||0;
+  return state.pPer90 ? per90(raw,p.min) : raw;
+}
+const smFmt=(v,k)=> k==='_passpct' ? v.toFixed(0)+'%' : (k==='min'||(!state.pPer90&&k!=='_passpct')) ? Math.round(v).toString() : (+v.toFixed(2)).toFixed(2);
+
+function scatterPanel(){
+  const wrap=h(`<div></div>`);
+  const mById=k=>SCATTER_METRICS.find(m=>m.k===k)||SCATTER_METRICS[0];
+  if(!SCATTER_METRICS.some(m=>m.k===state.pxk)) state.pxk='npxg';
+  if(!SCATTER_METRICS.some(m=>m.k===state.pyk)) state.pyk='xa';
+  const MX=mById(state.pxk), MY=mById(state.pyk);
+
+  // ---- axis pickers + the shared pos / per90 / min / search filters
+  const bar=h(`<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:16px 0 6px"></div>`);
+  const axisSel=(cur,set,label)=>{
+    const g=h(`<label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-2)">${label}</label>`);
+    const s=h(`<select style="font:inherit;font-weight:600;padding:6px 9px;border-radius:9px;border:1px solid var(--border);background:var(--surface-1);color:var(--ink);cursor:pointer"></select>`);
+    SCATTER_METRICS.forEach(m=>s.append(h(`<option value="${m.k}" ${m.k===cur?'selected':''}>${esc(m.l)}</option>`)));
+    s.onchange=()=>{set(s.value); render();}; g.append(s); return g;
+  };
+  bar.append(axisSel(state.pyk,v=>state.pyk=v,'Y'));
+  bar.append(axisSel(state.pxk,v=>state.pxk=v,'X'));
+  const swap=h(`<button class="icon-btn" title="Swap axes" aria-label="Swap axes">⇄</button>`);
+  swap.onclick=()=>{const t=state.pxk; state.pxk=state.pyk; state.pyk=t; render();};
+  bar.append(swap);
+  const posSeg=h(`<div class="seg"></div>`);
+  [['all','All'],['GK','GK'],['DEF','DEF'],['MID','MID'],['FWD','FWD']].forEach(([k,l])=>{
+    const b=h(`<button class="${state.pPos===k?'on neu':''}">${l}</button>`);
+    b.onclick=()=>{state.pPos=k; render();}; posSeg.append(b);});
+  bar.append(posSeg);
+  const p90Seg=h(`<div class="seg"></div>`);
+  [['Per 90',true],['Totals',false]].forEach(([l,v])=>{
+    const b=h(`<button class="${state.pPer90===v?'on neu':''}">${l}</button>`);
+    b.onclick=()=>{state.pPer90=v; render();}; p90Seg.append(b);});
+  bar.append(p90Seg);
+  const minSel=h(`<select style="font:inherit;font-weight:600;padding:7px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface-1);color:var(--ink);cursor:pointer"></select>`);
+  [[90,'≥ 90 min'],[180,'≥ 180 min'],[270,'≥ 270 min'],[450,'≥ 450 min']].forEach(([v,l])=>
+    minSel.append(h(`<option value="${v}" ${state.pMin===v?'selected':''}>${l}</option>`)));
+  minSel.onchange=()=>{state.pMin=+minSel.value; render();}; bar.append(minSel);
+  const search=h(`<input placeholder="Highlight player / team" value="${esc(state.pSearch)}" style="font:inherit;padding:7px 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface-1);color:var(--ink);flex:1;min-width:150px">`);
+  search.oninput=()=>{state.pSearch=search.value; render();};
+  bar.append(search);
+  wrap.append(bar);
+
+  const rows=AGG.players.filter(p=>p.min>=state.pMin && (state.pPos==='all'||p.group===state.pPos));
+  const card=h(`<div class="card pad"></div>`);
+  if(rows.length<2){ card.append(h(`<div class="muted" style="padding:24px;text-align:center">Not enough players at this filter to plot.</div>`)); wrap.append(card); return wrap; }
+  card.append(scatterSvg(rows,MX,MY));
+  card.append(h(`<div class="footnote">${rows.length} players · dot size = minutes played · dashed lines are the median ${esc(MX.l.toLowerCase())} and ${esc(MY.l.toLowerCase())} of those shown.
+    ${state.pPer90?'Per 90.':'Season totals.'} Search highlights matching dots. Click any dot for the full profile.</div>`));
+  wrap.append(card);
+  return wrap;
+}
+
+function scatterSvg(rows,MX,MY){
+  // plot box in SVG units; y grows down, so value axis is inverted
+  const L=13, R=118, T=6, B=64, PW2=R-L, PH2=B-T;
+  const xs=rows.map(p=>smVal(p,MX.k)), ys=rows.map(p=>smVal(p,MY.k));
+  const ext=(arr)=>{ let lo=Math.min(...arr), hi=Math.max(...arr); if(lo===hi){lo-=1;hi+=1;} const pad=(hi-lo)*0.06; return [lo-pad, hi+pad]; };
+  const [x0,x1]=ext(xs), [y0,y1]=ext(ys);
+  const px=v=>L+(v-x0)/(x1-x0)*PW2, py=v=>B-(v-y0)/(y1-y0)*PH2;
+  const med=arr=>{const s=[...arr].sort((a,b)=>a-b),n=s.length;return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2;};
+  const mx=med(xs), my=med(ys), maxMin=Math.max(...rows.map(p=>p.min),1);
+  const grid=cssv('--grid'), muted=cssv('--muted'), ink=cssv('--fg'), ink2=cssv('--ink-2');
+
+  // axis ticks (4 per axis, "nice"-ish)
+  const ticks=(lo,hi)=>{const step=(hi-lo)/4; return [0,1,2,3,4].map(i=>lo+step*i);};
+  const fmtT=(v,k)=> k==='_passpct'?Math.round(v)+'%':(Math.abs(v)>=100?Math.round(v):(Math.abs(v)>=10?v.toFixed(0):v.toFixed(1)));
+  let ax=`<rect x="${L}" y="${T}" width="${PW2}" height="${PH2}" fill="none" stroke="${grid}" stroke-width=".3"/>`;
+  ticks(x0,x1).forEach(v=>{const X=px(v);
+    ax+=`<line x1="${X.toFixed(1)}" y1="${T}" x2="${X.toFixed(1)}" y2="${B}" stroke="${grid}" stroke-width=".2"/>
+      <text x="${X.toFixed(1)}" y="${B+3.4}" font-size="2.4" text-anchor="middle" fill="${muted}">${fmtT(v,MX.k)}</text>`;});
+  ticks(y0,y1).forEach(v=>{const Y=py(v);
+    ax+=`<line x1="${L}" y1="${Y.toFixed(1)}" x2="${R}" y2="${Y.toFixed(1)}" stroke="${grid}" stroke-width=".2"/>
+      <text x="${L-1.5}" y="${(Y+0.9).toFixed(1)}" font-size="2.4" text-anchor="end" fill="${muted}">${fmtT(v,MY.k)}</text>`;});
+  // median crosshair (the quadrant divider)
+  ax+=`<line x1="${px(mx).toFixed(1)}" y1="${T}" x2="${px(mx).toFixed(1)}" y2="${B}" stroke="${ink}" stroke-width=".3" stroke-dasharray="1.4 1.4" stroke-opacity=".55"/>
+    <line x1="${L}" y1="${py(my).toFixed(1)}" x2="${R}" y2="${py(my).toFixed(1)}" stroke="${ink}" stroke-width=".3" stroke-dasharray="1.4 1.4" stroke-opacity=".55"/>`;
+  // axis titles
+  ax+=`<text x="${(L+R)/2}" y="${B+6.6}" font-size="2.9" font-weight="700" text-anchor="middle" fill="${ink2}">${esc(MX.l)}${state.pPer90&&MX.k!=='_passpct'&&MX.k!=='min'?' / 90':''}</text>
+    <text x="${-(T+B)/2}" y="${4.2}" font-size="2.9" font-weight="700" text-anchor="middle" transform="rotate(-90)" fill="${ink2}">${esc(MY.l)}${state.pPer90&&MY.k!=='_passpct'&&MY.k!=='min'?' / 90':''}</text>`;
+
+  const q=state.pSearch.trim().toLowerCase();
+  const hit=p=> q && (p.name.toLowerCase().includes(q)||p.team.toLowerCase().includes(q));
+  // draw non-highlighted first, highlighted on top
+  const pts=rows.map(p=>({p,X:px(smVal(p,MX.k)),Y:py(smVal(p,MY.k)),r:0.55+Math.sqrt(p.min/maxMin)*1.0,hl:hit(p)}));
+  let dots='';
+  pts.filter(d=>!d.hl).forEach(d=>{ dots+=dot(d,ink,false); });
+  pts.filter(d=>d.hl).forEach(d=>{ dots+=dot(d,ink,true); });
+
+  // labels: greedy, most "prominent" first (farthest from the field median), skip on
+  // collision so the plot doesn't turn to mush. A search always labels its matches.
+  const norm=(v,lo,hi)=>(v-lo)/((hi-lo)||1);
+  const scored=pts.map(d=>({d, s:(d.hl?9:0)+Math.hypot(norm(smVal(d.p,MX.k),x0,x1)-norm(mx,x0,x1), norm(smVal(d.p,MY.k),y0,y1)-norm(my,y0,y1))}))
+    .sort((a,b)=>b.s-a.s);
+  const placed=[]; let labels='';
+  const collide=(bx)=>placed.some(o=>Math.abs(o.x-bx.x)<bx.w/2+o.w/2 && Math.abs(o.y-bx.y)<2.6);
+  let n=0;
+  for(const {d,s} of scored){
+    if(n>=16 && !d.hl) break;
+    const nm=d.p.name.split(' ').pop();
+    const w=nm.length*1.35+1, right=d.X<(L+R)/2;
+    const bx={x:d.X+(right?w/2+2:-w/2-2), y:d.Y, w};
+    if(!d.hl && collide(bx)) continue;
+    labels+=`<text x="${(d.X+(right?2:-2)).toFixed(1)}" y="${(d.Y+0.9).toFixed(1)}" font-size="2.5" font-weight="${d.hl?700:600}" text-anchor="${right?'start':'end'}" fill="${d.hl?ink:ink2}" style="paint-order:stroke" stroke="${cssv('--bg')}" stroke-width=".7">${esc(nm)}</text>`;
+    placed.push(bx); n++;
+  }
+
+  const el=svgEl(`-2 0 128 76`, ax+dots+labels, 'style="overflow:visible"');
+  attachShotTT(el);
+  const svg=$('svg',el);
+  svg.style.cursor='default';
+  svg.addEventListener('click',e=>{ const t=e.target;
+    if(t.classList&&t.classList.contains('scatter-dot')&&t.dataset.pid){
+      state.pMode='table'; state.pPlayer=t.dataset.pid; render(); scrollTo(0,0);
+    }});
+  return cap(el, 900);
+}
+function dot(d,ink,hl){
+  const tt=`${esc(d.p.name)} · ${esc(d.p.team)}||${SCATTER_METRICS.find(m=>m.k===state.pxk).l}: ${smFmt(smVal(d.p,state.pxk),state.pxk)}||${SCATTER_METRICS.find(m=>m.k===state.pyk).l}: ${smFmt(smVal(d.p,state.pyk),state.pyk)}`;
+  // base dots are semi-transparent ink so dense regions read as darkness rather than a
+  // hairball of overlapping rings; a highlighted/searched dot is solid with a knock-out ring
+  return `<circle class="shot scatter-dot" data-pid="${esc(d.p.id)}" data-tt="${tt}" cx="${d.X.toFixed(1)}" cy="${d.Y.toFixed(1)}" r="${(hl?d.r+0.4:d.r).toFixed(2)}"
+    fill="${ink}" fill-opacity="${hl?1:0.32}" stroke="${hl?cssv('--bg'):'none'}" stroke-width="${hl?0.5:0}"/>`;
+}
+
 function Players(){
   const root=h('<div></div>');
-  const cmp = state.pMode==='compare';
+  const cmp = state.pMode==='compare', scat = state.pMode==='scatter';
+  const head={compare:['Head to head','Put any two players on the same percentile axes. Both profiles are drawn from per-90 output ranked against positional peers.'],
+    scatter:['Two metrics at once','Plot any metric against any other. Each dot is a player; the crosshair marks the median of the field shown. Click a dot for their full profile.'],
+    table:['Every player, every metric','Sortable per-90 output for all players with enough minutes. Filter by position, then click any player for a percentile profile against their positional peers.']}[state.pMode];
   root.append(h(`<div style="margin:26px 2px 6px">
     <div class="eyebrow">Player database</div>
-    <h2 style="font-size:26px;letter-spacing:-.02em;margin-top:6px">${cmp?'Head to head':'Every player, every metric'}</h2>
-    <p class="ink2" style="max-width:680px;margin:8px 0 0">${cmp
-      ?'Put any two players on the same percentile axes. Both profiles are drawn from per-90 output ranked against positional peers.'
-      :'Sortable per-90 output for all players with enough minutes. Filter by position, then click any player for a percentile profile against their positional peers.'}</p></div>`));
+    <h2 style="font-size:26px;letter-spacing:-.02em;margin-top:6px">${head[0]}</h2>
+    <p class="ink2" style="max-width:680px;margin:8px 0 0">${head[1]}</p></div>`));
 
   const modeSeg=h(`<div class="subtabs" style="margin:14px 0 2px"></div>`);
-  [['table','Table'],['compare','Compare']].forEach(([k,l])=>{
+  [['table','Table'],['scatter','Scatter'],['compare','Compare']].forEach(([k,l])=>{
     const b=h(`<button class="${state.pMode===k?'on':''}">${l}</button>`);
     b.onclick=()=>{state.pMode=k; render();}; modeSeg.append(b);});
   root.append(modeSeg);
 
   if(cmp){ root.append(comparePanel()); return root; }
+  if(scat){ root.append(scatterPanel()); return root; }
 
   if(state.pPlayer){ const P=AGG.players.find(p=>p.id===state.pPlayer); if(P) root.append(playerDetail(P)); }
 
@@ -2250,6 +2392,8 @@ function attachShotTT(elWrap){
   if(p.get('hp')) state.hPlayer=p.get('hp');
   if(p.get('tmap')) state.tmap=p.get('tmap');
   if(p.get('pmode')) state.pMode=p.get('pmode');
+  if(p.get('pxk')) state.pxk=p.get('pxk');
+  if(p.get('pyk')) state.pyk=p.get('pyk');
   if(p.get('tmode')) state.tMode=p.get('tmode');
   if(p.get('tca')) state.tcA=p.get('tca');
   if(p.get('tcb')) state.tcB=p.get('tcb');
