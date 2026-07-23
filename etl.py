@@ -37,7 +37,7 @@ FORMATION = {2:'4-4-2',3:'4-1-2-1-2',4:'4-3-3',5:'4-5-1',6:'4-4-1-1',7:'4-1-4-1'
     21:'4-1-3-2',22:'4-2-4',23:'4-3-1-2',24:'3-2-3-2',25:'3-3-3-1'}
 
 # Position slot (provider 131) -> role group. 1=GK, 2-5 def, 6-8 mid, 9-11 att (approx)
-def pos_group(slot):
+def pos_group(slot, formation=''):
     # The provider's formation slot is the traditional position number, NOT a depth ordering.
     # Verified against median pitch position pooled over all 208 team-matches:
     #   1 GK (x 11.8) | 2 RB, 3 LB (x ~52, wide) | 5, 6 CB (x ~37, central)
@@ -54,14 +54,18 @@ def pos_group(slot):
     if slot in (2,3,5,6): return 'DEF'   # RB, LB, CB, CB
     if slot in (4,8): return 'MID'       # CM, CM
     if slot == 9: return 'FWD'           # ST
-    if slot == 10: return 'AMB10'        # nominal attacking-midfield berth — see below
-    # Slots 7, 10 and 11 are genuinely ambiguous — what they mean depends on the
-    # formation and the player, so no fixed table can separate them:
-    #   7, 11  wingers (Yamal 72.4, Dembele 69.2 avg x) vs central midfielders
-    #          pushed wide (De Paul 53.0, Gravenberch 58.2)
-    #   10     a second striker in 4-4-2 / 4-3-3 / 4-2-3-1 (median x 60.5-64.7)
-    #          but a genuine central midfielder in 4-1-4-1 / 5-4-1 (46.1-51.8)
-    # All three are resolved later by nearest centroid on real average position.
+    if slot == 10:
+        # Slot 10 is a second striker in a front-TWO system but an attacking
+        # midfielder behind a lone striker — and the two sit at the SAME average
+        # position (~60), so geometry cannot tell them apart. The formation can: the
+        # last number in the formation string is the forward line, so ending in "-2"
+        # means two strikers and the 10 is one of them (Messi, J. David in 4-4-2 ->
+        # FWD); anything else has the 10 in the attacking-mid band (Bruno Fernandes,
+        # De Bruyne, Bellingham in 4-2-3-1 -> MID).
+        return 'FWD' if str(formation).split('-')[-1] == '2' else 'MID'
+    # Slots 7 and 11 (the wide berths) still can't be split by a table — they hold
+    # out-and-out wingers (Yamal 72.4, Dembele 69.2 avg x) and central midfielders
+    # pushed wide (De Paul 53.0, Gravenberch 58.2). Resolved later by nearest centroid.
     return 'AMB'
 
 BODY = {15:'Head',72:'Left foot',20:'Right foot',21:'Other'}
@@ -247,6 +251,10 @@ def process(fp):
         slots = [p.strip() for p in str(q.get(131,'')).split(',') if p.strip()]
         fid = q.get(130)
         cap = q.get(194)
+        try:
+            fname = FORMATION.get(int(fid), str(fid))
+        except Exception:
+            fname = '—'
         players = []
         for idx, pid in enumerate(pids):
             slot = slots[idx] if idx < len(slots) else str(idx+1)
@@ -255,14 +263,10 @@ def process(fp):
                 'name': pname.get(pid, '—'),
                 'shirt': shirts[idx] if idx < len(shirts) else '',
                 'slot': slot,
-                'group': pos_group(slot) if slot.isdigit() else 'SUB',
+                'group': pos_group(slot, fname) if slot.isdigit() else 'SUB',
                 'captain': (pid==cap),
                 'starter': idx < 11,
             })
-        try:
-            fname = FORMATION.get(int(fid), str(fid))
-        except Exception:
-            fname = '—'
         lineups[s] = {'formation': fname, 'players': players}
 
     # ---- aggregation containers
@@ -973,17 +977,14 @@ avg_of = lambda pid: (avgx_sum[pid] / avgx_n[pid]) if avgx_n[pid] else None
 
 # Centroids come from the UNAMBIGUOUS slots only, so the wide berths can be measured
 # against a clean reference before they are folded in.
-# Slot 10 counts toward the MID reference even though it is reassignable. Dropping it
-# leaves MID anchored on slots 4 and 8 only — the DEEP central midfielders — which pulls
-# the centroid down to 47.4, drags the MID/FWD boundary to ~54.6 and misclassifies
-# ordinary attacking midfielders as forwards. Counting it keeps MID at ~51.7 and the
-# boundary at ~56.8, which separates Messi (68.6) from Bellingham (55.9) correctly.
-REF = {'AMB10': 'MID'}
+# Centroids for resolving the wide slots (7, 11). Built from the unambiguous starts —
+# slot 10 has already been settled to MID or FWD by formation at parse time, so it
+# contributes to whichever group it landed in, keeping the MID reference anchored on
+# real attacking midfielders rather than only the deep pivots.
 cent = {}
 for g in ('GK', 'DEF', 'MID', 'FWD'):
     vals = [avg_of(p) for p, v in start_votes.items()
-            if v and REF.get(max(v, key=v.get), max(v, key=v.get)) == g
-            and avg_of(p) is not None]
+            if v and max(v, key=v.get) == g and avg_of(p) is not None]
     if vals: cent[g] = sum(vals) / len(vals)
 
 # Resolve each player's ambiguous starts to MID or FWD by their real average position,
@@ -992,7 +993,7 @@ for g in ('GK', 'DEF', 'MID', 'FWD'):
 # the strength of that single start.
 amb_fixed = defaultdict(int)
 for pid_, votes in start_votes.items():
-    n_amb = votes.pop('AMB', 0) + votes.pop('AMB10', 0)
+    n_amb = votes.pop('AMB', 0)
     if not n_amb: continue
     a = avg_of(pid_)
     g = ('MID' if a is None or not {'MID', 'FWD'} <= set(cent)
